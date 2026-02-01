@@ -12,10 +12,12 @@ dependencies = [
     "pillow>=11.0.0",
     "soundfile>=0.13.1",
     "torch>=2.10.0",
+    "requests>=2.32.0",
 ]
 
 [project.scripts]
 latent-resonance-dataset = "latent_resonance.dataset.cli:main"
+latent-resonance-scraper = "latent_resonance.dataset.scraper:main"
 
 [build-system]
 requires = ["hatchling"]

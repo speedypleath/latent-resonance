@@ -50,6 +50,32 @@ dataset = SpectrogramDataset("./data/spectrograms")
 
 Supported audio formats: `.wav`, `.mp3`, `.flac`, `.ogg`
 
+## Freesound Scraper
+
+Search [freesound.org](https://freesound.org) and download audio previews (HQ OGG ~192kbps) for GAN training data:
+
+```bash
+# CLI (API key via flag)
+uv run latent-resonance-scraper "cello" ./raw_audio --api-key YOUR_KEY --num-results 100
+
+# CLI (API key via env var)
+export FREESOUND_API_KEY=YOUR_KEY
+uv run latent-resonance-scraper "cello sustained" ./raw_audio --min-duration 5 --max-duration 30
+
+# Choose mp3 format instead of ogg
+uv run latent-resonance-scraper "cello" ./raw_audio --format mp3
+```
+
+Programmatic usage:
+
+```python
+from latent_resonance.dataset import scrape_freesound
+
+scrape_freesound("cello", "./raw_audio", api_key="...", num_results=50)
+```
+
+Requires a free Freesound API key from https://freesound.org/apiv2/apply/.
+
 ## Architecture
 
 Four-stage pipeline:
@@ -80,9 +106,10 @@ Facial actions map to energy states, not 1:1 coordinates:
 latent_resonance/
     __init__.py
     dataset/
-        __init__.py          # re-exports: process_directory, audio_to_spectrogram, SpectrogramDataset
+        __init__.py          # re-exports: process_directory, audio_to_spectrogram, SpectrogramDataset, scrape_freesound
         processing.py        # core pipeline (audio → spectrogram → PNG)
         dataset.py           # PyTorch SpectrogramDataset class
         cli.py               # argparse CLI entry point
         __main__.py          # shim for python -m latent_resonance.dataset
+        scraper.py           # freesound.org search + download
 ```
