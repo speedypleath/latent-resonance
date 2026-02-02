@@ -22,7 +22,7 @@ The pipeline consists of four distinct stages:
 **Source Material:**
 The model was trained on a custom-curated dataset of almost 500 spectrograms generated from audio samples sourced via [freesound.org](https://freesound.org) (cello, sustained tones, reese bass, and similar structured harmonic material).
 
-**Curation Process:**
+### Curation Process
 
 * **Audio Sourcing:** Samples were downloaded using the built-in freesound scraper (`latent-resonance-scraper`), filtering by duration and selecting sounds with clear harmonic structure.
 * **Audio Processing:** Raw audio was batch-processed using `librosa.feature.melspectrogram`, producing 512x512 grayscale PNGs.
@@ -74,20 +74,20 @@ The system does not map 1:1 coordinates (e.g., "head left = sound left"). Instea
 
 ## Installation & Usage
 
-**Prerequisites:**
+### Prerequisites
 
 * Python 3.13+
 * [uv](https://docs.astral.sh/uv/) package manager
 * Webcam
 
-**Setup:**
+### Setup
 
 ```bash
 # Install dependencies and create virtual environment
 uv sync
 ```
 
-**Running the System:**
+### Running the System
 
 1. Clone the repository.
 2. Ensure your trained model weights (`model.pt`) are in the `/checkpoints` folder.
@@ -97,7 +97,7 @@ uv sync
 uv run python main.py
 ```
 
-**Running Tests:**
+### Running Tests
 
 ```bash
 # Install dev dependencies (pytest)
