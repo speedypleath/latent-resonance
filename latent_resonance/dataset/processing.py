@@ -139,6 +139,14 @@ def spectrogram_to_audio(
     audio = librosa.griffinlim(
         S_stft, n_iter=n_iter, hop_length=hop_length, n_fft=n_fft
     )
+
+    # The forward pipeline normalises dB relative to the signal's peak power
+    # (ref=np.max), so the absolute level is lost.  Normalise the
+    # reconstructed waveform to a -1 dBFS peak to restore a usable amplitude.
+    peak = np.abs(audio).max()
+    if peak > 0:
+        audio = audio / peak * 10 ** (-1.0 / 20.0)  # ≈ 0.891
+
     return audio
 
 

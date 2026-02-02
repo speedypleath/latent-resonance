@@ -68,6 +68,15 @@ uv sync
 uv run python main.py
 ```
 
+**Running Tests:**
+```bash
+# Install dev dependencies (pytest)
+uv sync --group dev
+
+# Run the full test suite
+uv run pytest tests/ -v
+```
+
 ### 🧠 Technical Challenges & Learnings
 
 1. The "Phase" Problem
@@ -110,10 +119,13 @@ latent_resonance/          # Python package
         cli.py             # argparse CLI entry point
         __main__.py        # python -m latent_resonance.dataset
         scraper.py         # freesound.org search + download
+tests/
+    test_processing.py     # Forward/inverse pipeline & round-trip tests
 notebooks/                 # Training notebooks
     train_stylegan3.ipynb          # Google Colab version
     train_stylegan3_kaggle.ipynb   # Kaggle version
 data/                      # Dataset files (git-ignored)
+    audio/                 # Source audio files (OGG)
     spectrograms/          # Generated spectrogram PNGs
     spectrograms.zip       # Packaged dataset for training
 ```

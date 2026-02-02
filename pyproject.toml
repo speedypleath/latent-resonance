@@ -20,6 +20,9 @@ dependencies = [
 latent-resonance-dataset = "latent_resonance.dataset.cli:main"
 latent-resonance-scraper = "latent_resonance.dataset.scraper:main"
 
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
