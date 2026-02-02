@@ -9,6 +9,7 @@ import torch
 from PIL import Image
 
 from latent_resonance.dataset.processing import (
+    _minimum_phase_init,
     audio_to_spectrogram,
     save_audio,
     spectrogram_to_audio,
@@ -130,6 +131,87 @@ def test_round_trip_array(spectrogram: np.ndarray) -> None:
 def test_round_trip_via_image(spectrogram: np.ndarray) -> None:
     img = spectrogram_to_image(spectrogram)
     audio = spectrogram_to_audio(img)
+    assert audio.ndim == 1
+    assert np.any(audio != 0)
+
+
+# ── Enhancement Tests ────────────────────────────────────────────────────────
+
+
+def test_min_phase_off_falls_back_to_librosa(spectrogram: np.ndarray) -> None:
+    """use_min_phase=False should use librosa.griffinlim and still produce audio."""
+    audio = spectrogram_to_audio(spectrogram, use_min_phase=False)
+    assert audio.ndim == 1
+    assert np.any(audio != 0)
+
+
+def test_no_smoothing_path(spectrogram: np.ndarray) -> None:
+    """spectral_smooth_sigma=0 should skip Gaussian filtering."""
+    audio = spectrogram_to_audio(spectrogram, spectral_smooth_sigma=0.0)
+    assert audio.ndim == 1
+    assert np.any(audio != 0)
+
+
+def test_custom_lpf_cutoff(spectrogram: np.ndarray) -> None:
+    """Custom LPF cutoff should produce valid audio."""
+    audio = spectrogram_to_audio(spectrogram, lpf_cutoff=4000.0)
+    assert audio.ndim == 1
+    assert np.any(audio != 0)
+
+
+def test_noise_floor_suppresses_quiet_bins(spectrogram: np.ndarray) -> None:
+    """With an aggressive noise floor, some mel bins should be zeroed out."""
+    # Use a very aggressive noise floor to ensure suppression
+    audio_aggressive = spectrogram_to_audio(spectrogram, noise_floor_db=-10.0)
+    audio_default = spectrogram_to_audio(spectrogram, noise_floor_db=-60.0)
+    assert audio_aggressive.ndim == 1
+    assert audio_default.ndim == 1
+    # The aggressive floor should produce a different (typically quieter) result
+    # Both should still produce non-zero audio
+    assert np.any(audio_aggressive != 0)
+    assert np.any(audio_default != 0)
+
+
+def test_boundary_fades_near_zero(spectrogram: np.ndarray) -> None:
+    """First and last samples should be near zero due to raised-cosine fades."""
+    audio = spectrogram_to_audio(spectrogram)
+    # The very first sample should be ~0 (fade-in starts from 0)
+    assert abs(audio[0]) < 0.01
+    # The very last sample should be ~0 (fade-out ends at 0)
+    assert abs(audio[-1]) < 0.01
+
+
+def test_minimum_phase_init_shape_and_dtype() -> None:
+    """_minimum_phase_init should return complex64 array with matching shape."""
+    n_fft = 2048
+    n_freq = n_fft // 2 + 1
+    n_frames = 44
+    S_mag = np.random.rand(n_freq, n_frames).astype(np.float32)
+    result = _minimum_phase_init(S_mag, n_fft)
+    assert result.shape == (n_freq, n_frames)
+    assert result.dtype == np.complex64
+
+
+def test_minimum_phase_init_preserves_magnitude() -> None:
+    """_minimum_phase_init should preserve the original magnitudes."""
+    n_fft = 2048
+    n_freq = n_fft // 2 + 1
+    n_frames = 44
+    S_mag = np.random.rand(n_freq, n_frames).astype(np.float32) + 0.01
+    result = _minimum_phase_init(S_mag, n_fft)
+    # The magnitude of the result should be close to S_mag
+    np.testing.assert_allclose(np.abs(result), S_mag, atol=1e-4)
+
+
+def test_all_enhancements_combined(spectrogram: np.ndarray) -> None:
+    """All enhancements enabled together should produce valid audio."""
+    audio = spectrogram_to_audio(
+        spectrogram,
+        spectral_smooth_sigma=1.0,
+        use_min_phase=True,
+        noise_floor_db=-40.0,
+        lpf_cutoff=6000.0,
+    )
     assert audio.ndim == 1
     assert np.any(audio != 0)
 

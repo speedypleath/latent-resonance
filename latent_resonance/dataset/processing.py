@@ -3,6 +3,8 @@ import warnings
 
 import librosa
 import numpy as np
+import scipy.ndimage
+import scipy.signal
 import soundfile as sf
 from PIL import Image
 
@@ -56,7 +58,6 @@ def spectrogram_to_image(
     img = img.transpose(Image.FLIP_TOP_BOTTOM)
     return img
 
-
 def process_directory(
     input_dir: str | Path,
     output_dir: str | Path,
@@ -96,6 +97,105 @@ def process_directory(
     return saved
 
 
+def _minimum_phase_init(S_mag: np.ndarray, n_fft: int) -> np.ndarray:
+    """Compute a minimum-phase STFT estimate from a magnitude spectrogram.
+
+    Uses the cepstral method: take the log-magnitude, inverse-DFT to get the
+    cepstrum, window to keep only the causal half, then DFT back to obtain a
+    complex spectrum whose phase is the minimum-phase estimate.
+
+    Parameters
+    ----------
+    S_mag : np.ndarray, shape (n_freq, n_frames)
+        Non-negative magnitude spectrogram (amplitude, not power).
+    n_fft : int
+        FFT size used to produce *S_mag*.
+
+    Returns
+    -------
+    np.ndarray, shape (n_freq, n_frames), complex64
+        Complex STFT with minimum-phase estimate and original magnitudes.
+    """
+    eps = 1e-10
+    log_mag = np.log(np.maximum(S_mag, eps))
+
+    # Inverse DFT along frequency axis to get cepstrum
+    cepstrum = np.fft.irfft(log_mag, n=n_fft, axis=0)
+
+    # Causal window: keep DC, double causal part, zero anti-causal
+    n_freq = S_mag.shape[0]  # n_fft // 2 + 1
+    window = np.zeros(n_fft, dtype=cepstrum.dtype)
+    window[0] = 1.0
+    window[1: n_fft // 2] = 2.0
+    if n_fft % 2 == 0:
+        window[n_fft // 2] = 1.0
+    cepstrum *= window[:, np.newaxis]
+
+    # Back to frequency domain for minimum-phase spectrum
+    min_phase_spec = np.fft.rfft(cepstrum, n=n_fft, axis=0)
+    # Extract phase, apply to original magnitude
+    phase = np.exp(1j * np.angle(np.exp(min_phase_spec)))
+    return (S_mag * phase).astype(np.complex64)
+
+
+def _griffinlim_with_init(
+    S_mag: np.ndarray,
+    S_complex_init: np.ndarray,
+    *,
+    n_iter: int = 64,
+    hop_length: int = HOP_LENGTH,
+    n_fft: int = N_FFT,
+    momentum: float = 0.99,
+) -> np.ndarray:
+    """Griffin-Lim algorithm with a custom initial complex STFT.
+
+    Parameters
+    ----------
+    S_mag : np.ndarray, shape (n_freq, n_frames)
+        Target magnitude spectrogram (amplitude).
+    S_complex_init : np.ndarray, shape (n_freq, n_frames), complex
+        Initial complex STFT estimate (e.g. from minimum-phase).
+    n_iter : int
+        Number of Griffin-Lim iterations.
+    hop_length : int
+        STFT hop length.
+    n_fft : int
+        FFT size.
+    momentum : float
+        Momentum for faster convergence (0 = classic GL).
+
+    Returns
+    -------
+    np.ndarray, 1-D float32
+        Reconstructed audio waveform.
+    """
+    S_prev = np.zeros_like(S_complex_init)
+    S_complex = S_complex_init.copy()
+
+    for _ in range(n_iter):
+        audio = librosa.istft(S_complex, hop_length=hop_length, n_fft=n_fft)
+        S_new = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
+        # Truncate or pad to match target frame count
+        n_frames = S_mag.shape[1]
+        if S_new.shape[1] > n_frames:
+            S_new = S_new[:, :n_frames]
+        elif S_new.shape[1] < n_frames:
+            pad = np.zeros(
+                (S_new.shape[0], n_frames - S_new.shape[1]),
+                dtype=S_new.dtype,
+            )
+            S_new = np.concatenate([S_new, pad], axis=1)
+
+        phase = np.exp(1j * np.angle(S_new))
+        S_update = S_mag * phase
+        S_complex = S_update + momentum * (S_update - S_prev)
+        S_prev = S_update
+
+    return librosa.istft(S_complex, hop_length=hop_length, n_fft=n_fft).astype(
+        np.float32
+    )
+
+
 def spectrogram_to_audio(
     spectrogram: "np.ndarray | Image.Image",
     *,
@@ -103,10 +203,14 @@ def spectrogram_to_audio(
     n_fft: int = N_FFT,
     hop_length: int = HOP_LENGTH,
     n_mels: int = N_MELS,
-    n_iter: int = 32,
+    n_iter: int = 64,
     db_range: float = 80.0,
+    lpf_cutoff: float = 8000.0,
+    spectral_smooth_sigma: float = 0.5,
+    use_min_phase: bool = True,
+    noise_floor_db: float = -60.0,
 ) -> np.ndarray:
-    """Reconstruct audio waveform from a [-1,1] spectrogram via Griffin-Lim.
+    """Reconstruct audio waveform from a [-1,1] mel spectrogram via Griffin-Lim.
 
     Accepts a numpy array in [-1, 1], a PIL Image (as saved by the forward
     pipeline), or a PyTorch tensor of shape ``(1, H, W)`` or ``(H, W)``.
@@ -130,15 +234,58 @@ def spectrogram_to_audio(
             f"Expected a 2-D spectrogram, got shape {arr.shape}"
         )
 
-    # --- [-1, 1] → dB → power → linear STFT → Griffin-Lim ---------------
+    # --- [-1, 1] → dB -------------------------------------------------
     S_db = (arr + 1.0) * (db_range / 2.0) - db_range
-    S_power = librosa.db_to_power(S_db, ref=1.0)
+
+    # --- Spectral smoothing (reduce 8-bit quantisation artifacts) ------
+    if spectral_smooth_sigma > 0:
+        S_db = scipy.ndimage.gaussian_filter(
+            S_db, sigma=[spectral_smooth_sigma, spectral_smooth_sigma * 0.5]
+        )
+
+    # --- dB → mel power -----------------------------------------------
+    S_mel = librosa.db_to_power(S_db, ref=1.0)
+
+    # --- Noise floor suppression --------------------------------------
+    if noise_floor_db < 0:
+        peak_power = S_mel.max()
+        threshold = peak_power * librosa.db_to_power(noise_floor_db, ref=1.0)
+        S_mel = np.where(S_mel < threshold, 0.0, S_mel)
+
+    # --- mel → STFT magnitude -----------------------------------------
     S_stft = librosa.feature.inverse.mel_to_stft(
-        S_power, sr=sr, n_fft=n_fft, power=2.0
+        S_mel, sr=sr, n_fft=n_fft, power=2.0,
     )
-    audio = librosa.griffinlim(
-        S_stft, n_iter=n_iter, hop_length=hop_length, n_fft=n_fft
-    )
+
+    # --- Griffin-Lim reconstruction -----------------------------------
+    S_amp = np.sqrt(np.maximum(S_stft, 0.0))
+    if use_min_phase:
+        S_init = _minimum_phase_init(S_amp, n_fft)
+        audio = _griffinlim_with_init(
+            S_amp, S_init,
+            n_iter=n_iter, hop_length=hop_length,
+            n_fft=n_fft, momentum=0.99,
+        )
+    else:
+        audio = librosa.griffinlim(
+            S_stft, n_iter=n_iter, hop_length=hop_length,
+            momentum=0.99, n_fft=n_fft,
+        )
+
+    # --- Low-pass filter (8 kHz default, order 4) ---------------------
+    if lpf_cutoff and lpf_cutoff < sr / 2:
+        sos = scipy.signal.butter(
+            4, lpf_cutoff, btype="low", fs=sr, output="sos",
+        )
+        audio = scipy.signal.sosfiltfilt(sos, audio).astype(np.float32)
+
+    # --- Boundary fades (5 ms raised-cosine to eliminate clicks) ------
+    fade_samples = int(0.005 * sr)
+    if len(audio) > 2 * fade_samples:
+        fade_in = (1.0 - np.cos(np.linspace(0, np.pi, fade_samples))) / 2.0
+        fade_out = (1.0 - np.cos(np.linspace(np.pi, 0, fade_samples))) / 2.0
+        audio[:fade_samples] *= fade_in
+        audio[-fade_samples:] *= fade_out
 
     # The forward pipeline normalises dB relative to the signal's peak power
     # (ref=np.max), so the absolute level is lost.  Normalise the
