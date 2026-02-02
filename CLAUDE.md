@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Latent Resonance: Facial Acoustics** — a Python generative system that converts facial micro-movements into audio via GAN-generated spectrograms. The user's face is never displayed; instead, facial data drives sound synthesis parameters.
+**Latent Resonance: Facial Acoustics** — a Python generative system that converts facial micro-movements into audio via GAN-generated spectrograms. The user's face is never displayed; instead, facial data drives sound synthesis parameters. Trained on ~489 spectrograms from structured harmonic audio (cello, sustained tones, reese bass) sourced via freesound.org.
 
 ## Setup and Running
 
@@ -15,11 +15,24 @@ uv sync
 # Add a new dependency
 uv add <package>
 
-# Run (requires webcam and model weights in /checkpoints/model.pt)
+# Run (requires webcam and model weights in /checkpoints/)
 uv run python main.py
+
+# Reconstruct audio from latest checkpoint (no webcam needed)
+uv run python reconstruct_samples.py
 ```
 
-Requires Python 3.13+, [uv](https://docs.astral.sh/uv/), and a webcam.
+Requires Python 3.13+, [uv](https://docs.astral.sh/uv/), and a webcam for live mode.
+
+## Testing
+
+```bash
+# Install dev dependencies
+uv sync --group dev
+
+# Run the full test suite
+uv run pytest tests/ -v
+```
 
 ## Dataset Processing
 
@@ -95,21 +108,48 @@ Facial actions map to energy states, not 1:1 coordinates:
 
 ### Key Technical Decisions
 
-- **Griffin-Lim** for phase estimation: spectrograms store only amplitude, so phase must be reconstructed iteratively
+- **Griffin-Lim** for phase estimation: spectrograms store only amplitude, so phase must be reconstructed iteratively. Enhanced with minimum-phase initialization, spectral smoothing, noise floor suppression, and boundary fades.
 - **Linear interpolation** on input vector: prevents chaotic flashing from raw coordinate mapping, creates fluid drone-like morphing
 - **Log-scale dB normalization** to [-1, 1] range for GAN training stability
 - Structured harmonic source material (cello, speech) trains better than noisy/white-noise spectrograms
 
+## GAN Training
+
+Training uses StyleGAN2-ADA (or StyleGAN3-t) with transfer learning from FFHQ-512 pretrained weights. The FFHQ checkpoint is RGB (3-channel); the spectrogram dataset is grayscale (1-channel). The training notebooks patch `copy_params_and_buffers` in `torch_utils/misc.py` to skip shape-mismatched layers during resume.
+
+Training is done on Kaggle (T4 x2) or Google Colab (single T4). Notebooks are in `notebooks/`.
+
+Key training parameters for small spectrogram datasets (~489 images):
+- `--cfg=auto --gamma=3.0 --aug=ada --target=0.6` (ADA for limited data)
+- `--mirror=0` (no horizontal flip — it reverses the time axis of spectrograms)
+- `--batch=4` on single T4 (VRAM constrained at 512x512)
+- `--resume=ffhq512` (transfer learning from pretrained FFHQ)
+
+Model checkpoints are saved in `checkpoints/` (StyleGAN pkl format). `reconstruct_samples.py` loads the latest checkpoint and generates spectrograms + reconstructed audio.
+
 ## Project Structure
 
 ```
+main.py                    # Live webcam → GAN → audio entry point
+reconstruct_samples.py     # Generate spectrograms from checkpoint & reconstruct audio
 latent_resonance/
     __init__.py
     dataset/
-        __init__.py          # re-exports: process_directory, audio_to_spectrogram, SpectrogramDataset, scrape_freesound
-        processing.py        # core pipeline (audio → spectrogram → PNG)
-        dataset.py           # PyTorch SpectrogramDataset class
-        cli.py               # argparse CLI entry point
-        __main__.py          # shim for python -m latent_resonance.dataset
-        scraper.py           # freesound.org search + download
+        __init__.py        # re-exports: process_directory, audio_to_spectrogram,
+                           #   spectrogram_to_audio, save_audio, SpectrogramDataset, scrape_freesound
+        processing.py      # core pipeline (audio → spectrogram → PNG, spectrogram → audio)
+        dataset.py         # PyTorch SpectrogramDataset class
+        cli.py             # argparse CLI entry point
+        __main__.py        # shim for python -m latent_resonance.dataset
+        scraper.py         # freesound.org search + download
+tests/
+    test_processing.py     # forward/inverse pipeline & round-trip tests
+notebooks/
+    train_stylegan2_ada_kaggle.ipynb   # Kaggle training notebook (StyleGAN2-ADA)
+    train_stylegan3.ipynb              # Colab training notebook (StyleGAN3)
+    train_stylegan3_kaggle.ipynb       # Kaggle training notebook (StyleGAN3)
+checkpoints/               # trained model snapshots (pkl)
+data/
+    audio/                 # source audio files (OGG)
+    spectrograms/          # generated spectrogram PNGs (512x512 grayscale)
 ```

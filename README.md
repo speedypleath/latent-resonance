@@ -39,6 +39,8 @@ The curated spectrogram dataset was used to train a StyleGAN model using transfe
 
 **Visual**: You will see terrifying, melted faces. Some might have "bassline textures" instead of skin, but you will clearly see eyes or mouths.
 
+![alt text](assets/image.png)
+
 **Audio Quality**: Unusable. It will sound like static with weird voice-like formants.
 
 ### Phase 2: The "Structure" Phase (50 – 200 kimg)
