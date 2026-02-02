@@ -56,7 +56,7 @@ Search [freesound.org](https://freesound.org) and download audio previews (HQ OG
 
 ```bash
 # CLI (API key via flag)
-uv run latent-resonance-scraper "cello" ./raw_audio --api-key YOUR_KEY --num-results 100
+uv run latent-resonance-scraper "reese bass" ./raw_audio --api-key YOUR_KEY --num-results 100
 
 # CLI (API key via env var)
 export FREESOUND_API_KEY=YOUR_KEY

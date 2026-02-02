@@ -23,10 +23,11 @@ The pipeline consists of four distinct stages:
 ### 📂 The Dataset: "Visualizing the Invisible"
 
 **Source Material:**
-The model was trained on a custom-curated dataset of [Insert Number, e.g., 1,000] spectrograms generated from [Insert Source, e.g., Bird Calls / Industrial Machinery / Human Speech].
+The model was trained on a custom-curated dataset of 435 spectrograms generated from audio samples sourced via [freesound.org](https://freesound.org) (cello, sustained tones, reese bass, and similar structured harmonic material).
 
 **Curation Process:**
-* **Audio Processing:** Raw audio was batch-processed using `librosa.feature.melspectrogram`.
+* **Audio Sourcing:** Samples were downloaded using the built-in freesound scraper (`latent-resonance-scraper`), filtering by duration and selecting sounds with clear harmonic structure.
+* **Audio Processing:** Raw audio was batch-processed using `librosa.feature.melspectrogram`, producing 512x512 grayscale PNGs.
 * **Normalization:** All spectrograms were converted to log-scale (dB) and normalized to a range of `[-1, 1]` to stabilize GAN training.
 * **Learnings:** I discovered that "noisy" images (like white noise spectrograms) confuse the model, while structured harmonic sounds (like cello or speech) produce cleaner visual patterns.
 
@@ -81,9 +82,47 @@ uv run python main.py
 
     Solution: I used a smoothing function (Linear Interpolation) on the input vector. This allows the sound to "morph" slowly rather than snapping instantly, creating a fluid, drone-like aesthetic.
 
+3. Training the GAN: Trial and Error
+
+    I chose **StyleGAN3-t** (translation-equivariant) for its suitability with spectrograms, where the horizontal axis represents time and translation equivariance preserves temporal structure.
+
+    **Colab attempt (single T4):** My first attempt was on Google Colab with a single Tesla T4 GPU. StyleGAN3's custom CUDA ops (`bias_act`, `upfirdn2d`, `filtered_lrelu`) failed to compile — the fused kernels expect a build environment that Colab doesn't provide out of the box. I had to patch the ops to fall back to native PyTorch reference implementations, which are significantly more memory-hungry. This forced me to drastically reduce the model: `cbase=8192`, `cmax=128`, `batch=2` — a quarter of the default capacity — just to fit in the T4's 15 GB VRAM. Training ran for 1000 kimg but Colab's session time limits made long runs unreliable.
+
+    **PyTorch compatibility patches:** StyleGAN3's codebase hasn't been updated for recent PyTorch versions. I had to manually patch two breaking changes: `InfiniteSampler` passing `dataset` to the `Sampler` superclass (removed in PyTorch 2.4), and Adam optimizer receiving integer betas `[0, 0.99]` instead of floats (rejected since PyTorch 2.9).
+
+    **Kaggle attempt (T4 x2):** To get longer uninterrupted training, I moved to Kaggle which offers dual T4 GPUs and longer session limits. I initially configured multi-GPU training (`--gpus=2`) but ran into issues and fell back to single-GPU mode. The same CUDA ops compilation problem occurred, requiring the same native fallback and reduced model capacity. I trained for 5000 kimg on Kaggle, which produced usable results.
+
+    **What I learned:** Free-tier GPU platforms are viable for GAN training but require significant adaptation. The gap between "paper configurations" and what actually runs on a T4 with native ops is large — I ended up using roughly 1/4 of the model's intended capacity. Despite this, the 435-spectrogram dataset was small enough that the reduced model could still learn meaningful structure. Structured harmonic source material (cello, sustained tones) trained noticeably better than percussive or noisy samples.
+
+    Training notebooks are available in the `notebooks/` folder: `train_stylegan3.ipynb` (Colab) and `train_stylegan3_kaggle.ipynb` (Kaggle).
+
+---
+
+### 📁 Project Structure
+
+```
+latent_resonance/          # Python package
+    __init__.py
+    dataset/
+        __init__.py        # re-exports public API
+        processing.py      # audio ↔ spectrogram conversion
+        dataset.py         # PyTorch SpectrogramDataset
+        cli.py             # argparse CLI entry point
+        __main__.py        # python -m latent_resonance.dataset
+        scraper.py         # freesound.org search + download
+notebooks/                 # Training notebooks
+    train_stylegan3.ipynb          # Google Colab version
+    train_stylegan3_kaggle.ipynb   # Kaggle version
+data/                      # Dataset files (git-ignored)
+    spectrograms/          # Generated spectrogram PNGs
+    spectrograms.zip       # Packaged dataset for training
+```
+
+---
+
 ### 📜 Credits
 
 * Computer Vision: Google MediaPipe
 * Audio Processing: Librosa
-* Model Architecture: [Insert Model Name, e.g., StyleGAN2-ADA / DCGAN]
-* Curated by: [Your Name]
+* Model Architecture: StyleGAN3-t (NVIDIA)
+* Audio samples: [freesound.org](https://freesound.org)

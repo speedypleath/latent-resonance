@@ -3,7 +3,15 @@ import warnings
 
 import librosa
 import numpy as np
+import soundfile as sf
 from PIL import Image
+
+try:
+    import torch
+
+    _has_torch = True
+except ImportError:
+    _has_torch = False
 
 SAMPLE_RATE = 22050
 N_FFT = 2048
@@ -86,3 +94,64 @@ def process_directory(
 
     print(f"Done. {len(saved)}/{len(audio_files)} files processed.")
     return saved
+
+
+def spectrogram_to_audio(
+    spectrogram: "np.ndarray | Image.Image",
+    *,
+    sr: int = SAMPLE_RATE,
+    n_fft: int = N_FFT,
+    hop_length: int = HOP_LENGTH,
+    n_mels: int = N_MELS,
+    n_iter: int = 32,
+    db_range: float = 80.0,
+) -> np.ndarray:
+    """Reconstruct audio waveform from a [-1,1] spectrogram via Griffin-Lim.
+
+    Accepts a numpy array in [-1, 1], a PIL Image (as saved by the forward
+    pipeline), or a PyTorch tensor of shape ``(1, H, W)`` or ``(H, W)``.
+
+    Returns a 1-D numpy array of audio samples at sample rate *sr*.
+    """
+    # --- normalise input to numpy [-1, 1] of shape (H, W) ----------------
+    if isinstance(spectrogram, Image.Image):
+        # Undo the vertical flip applied in spectrogram_to_image
+        spectrogram = spectrogram.transpose(Image.FLIP_TOP_BOTTOM)
+        arr = np.array(spectrogram, dtype=np.float32)
+        arr = arr / 255.0 * 2.0 - 1.0
+    elif _has_torch and isinstance(spectrogram, torch.Tensor):
+        arr = spectrogram.detach().cpu().numpy()
+        arr = arr.squeeze()  # remove channel dim if present
+    else:
+        arr = np.asarray(spectrogram, dtype=np.float32)
+
+    if arr.ndim != 2:
+        raise ValueError(
+            f"Expected a 2-D spectrogram, got shape {arr.shape}"
+        )
+
+    # --- [-1, 1] → dB → power → linear STFT → Griffin-Lim ---------------
+    S_db = (arr + 1.0) * (db_range / 2.0) - db_range
+    S_power = librosa.db_to_power(S_db, ref=1.0)
+    S_stft = librosa.feature.inverse.mel_to_stft(
+        S_power, sr=sr, n_fft=n_fft, power=2.0
+    )
+    audio = librosa.griffinlim(
+        S_stft, n_iter=n_iter, hop_length=hop_length, n_fft=n_fft
+    )
+    return audio
+
+
+def save_audio(
+    audio: np.ndarray,
+    output_path: "str | Path",
+    sr: int = SAMPLE_RATE,
+) -> Path:
+    """Save audio waveform to a WAV file.
+
+    Returns the resolved output path.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(output_path), audio, sr)
+    return output_path

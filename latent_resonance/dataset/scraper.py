@@ -5,14 +5,35 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import time
 import warnings
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 
 BASE_URL = "https://freesound.org/apiv2"
 DEFAULT_PAGE_SIZE = 15
 DEFAULT_FORMAT = "ogg"
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 5  # seconds
+
+
+def _request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
+    """Perform an HTTP request, retrying on 429 Too Many Requests with exponential backoff."""
+    for attempt in range(MAX_RETRIES + 1):
+        resp = requests.request(method, url, **kwargs)
+        if resp.status_code == 429:
+            if attempt == MAX_RETRIES:
+                resp.raise_for_status()
+            delay = RETRY_BASE_DELAY * (2 ** attempt)
+            detail = resp.json().get("detail", "rate limited")
+            print(f"Throttled: {detail}. Retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})...")
+            time.sleep(delay)
+        else:
+            resp.raise_for_status()
+            return resp
+    return resp  # unreachable, but keeps type checkers happy
 
 
 def _sanitize_filename(name: str) -> str:
@@ -36,7 +57,7 @@ def scrape_freesound(
         query: Search query string.
         output_dir: Directory to save downloaded files.
         api_key: Freesound API key. Falls back to ``FREESOUND_API_KEY`` env var.
-        num_results: Maximum number of sounds to download.
+            : Maximum number of sounds to download.
         format: Preview format — ``"ogg"`` or ``"mp3"``.
         min_duration: Minimum sound duration in seconds (inclusive).
         max_duration: Maximum sound duration in seconds (inclusive).
@@ -44,6 +65,7 @@ def scrape_freesound(
     Returns:
         List of paths to downloaded audio files.
     """
+    load_dotenv()
     api_key = api_key or os.environ.get("FREESOUND_API_KEY")
     if not api_key:
         raise ValueError(
@@ -78,8 +100,7 @@ def scrape_freesound(
     url: str | None = f"{BASE_URL}/search/text/"
 
     while url and len(saved) < num_results:
-        resp = requests.get(url, params=params)
-        resp.raise_for_status()
+        resp = _request_with_retry("GET", url, params=params)
         data = resp.json()
 
         for result in data.get("results", []):
@@ -98,8 +119,7 @@ def scrape_freesound(
 
             dest = output_dir / f"{sound_id}_{name}.{format}"
             try:
-                dl = requests.get(preview_url)
-                dl.raise_for_status()
+                dl = _request_with_retry("GET", preview_url)
                 dest.write_bytes(dl.content)
                 saved.append(dest)
                 print(f"[{len(saved)}/{num_results}] {dest.name}")
@@ -107,8 +127,8 @@ def scrape_freesound(
                 warnings.warn(f"Failed to download sound {sound_id}: {exc}")
 
         url = data.get("next")
-        # After the first request, params are baked into the 'next' URL
-        params = {}
+        # Pagination URLs include query params but not the token
+        params = {"token": api_key}
 
     return saved
 
