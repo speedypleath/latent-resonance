@@ -205,5 +205,5 @@ data/                      # Dataset files (git-ignored)
 
 * Computer Vision: Google MediaPipe
 * Audio Processing: Librosa
-* Model Architecture: StyleGAN3-t (NVIDIA)
+* Model Architecture: StyleGAN2-ada
 * Audio samples: [freesound.org](https://freesound.org)
