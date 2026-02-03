@@ -2,6 +2,7 @@ from pathlib import Path
 import warnings
 
 import librosa
+import matplotlib
 import numpy as np
 import scipy.ndimage
 import scipy.signal
@@ -22,6 +23,21 @@ N_MELS = 512
 IMAGE_SIZE = 512
 
 SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg"}
+
+# ── Magma colormap lookup tables ─────────────────────────────────────────────
+_cmap = matplotlib.colormaps["magma"]
+_MAGMA_LUT = (_cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)  # (256, 3)
+
+# Perceived luminance (BT.601) for each LUT entry – used for RGB→scalar inversion
+_MAGMA_LUMINANCE = (
+    0.299 * _MAGMA_LUT[:, 0].astype(np.float64)
+    + 0.587 * _MAGMA_LUT[:, 1].astype(np.float64)
+    + 0.114 * _MAGMA_LUT[:, 2].astype(np.float64)
+)
+
+# Pre-sorted luminance for searchsorted inversion
+_LUMA_ORDER = np.argsort(_MAGMA_LUMINANCE)
+_LUMA_SORTED = _MAGMA_LUMINANCE[_LUMA_ORDER]
 
 
 def audio_to_spectrogram(
@@ -51,9 +67,10 @@ def audio_to_spectrogram(
 def spectrogram_to_image(
     spectrogram: np.ndarray, size: int = IMAGE_SIZE
 ) -> Image.Image:
-    """Convert a [-1, 1] spectrogram array to a grayscale PIL Image."""
-    pixel_values = ((spectrogram + 1.0) / 2.0 * 255.0).clip(0, 255).astype(np.uint8)
-    img = Image.fromarray(pixel_values, mode="L")
+    """Convert a [-1, 1] spectrogram array to an RGB PIL Image using the magma colormap."""
+    indices = ((spectrogram + 1.0) / 2.0 * 255.0).clip(0, 255).astype(np.uint8)
+    rgb = _MAGMA_LUT[indices]  # (H, W, 3)
+    img = Image.fromarray(rgb, mode="RGB")
     img = img.resize((size, size), Image.LANCZOS)
     img = img.transpose(Image.FLIP_TOP_BOTTOM)
     return img
@@ -196,6 +213,23 @@ def _griffinlim_with_init(
     )
 
 
+def _rgb_to_scalar(rgb: np.ndarray) -> np.ndarray:
+    """Convert an (H, W, 3) RGB magma image (0-255 float) to a [-1, 1] scalar array.
+
+    For each pixel, compute BT.601 luminance, find the closest magma LUT entry,
+    and map the LUT index back to [-1, 1].
+    """
+    luma = (
+        0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
+    )
+    # Find nearest LUT entry via searchsorted on pre-sorted luminance
+    insert_idx = np.searchsorted(_LUMA_SORTED, luma.ravel()).clip(0, 255)
+    # Map sorted position back to original LUT index
+    lut_indices = _LUMA_ORDER[insert_idx].reshape(luma.shape)
+    # LUT index 0..255 → scalar -1..1
+    return lut_indices.astype(np.float32) / 255.0 * 2.0 - 1.0
+
+
 def spectrogram_to_audio(
     spectrogram: "np.ndarray | Image.Image",
     *,
@@ -222,10 +256,19 @@ def spectrogram_to_audio(
         # Undo the vertical flip applied in spectrogram_to_image
         spectrogram = spectrogram.transpose(Image.FLIP_TOP_BOTTOM)
         arr = np.array(spectrogram, dtype=np.float32)
-        arr = arr / 255.0 * 2.0 - 1.0
+        if arr.ndim == 3:
+            # RGB magma image → invert via luminance
+            arr = _rgb_to_scalar(arr)
+        else:
+            # Legacy grayscale
+            arr = arr / 255.0 * 2.0 - 1.0
     elif _has_torch and isinstance(spectrogram, torch.Tensor):
         arr = spectrogram.detach().cpu().numpy()
-        arr = arr.squeeze()  # remove channel dim if present
+        if arr.ndim == 3 and arr.shape[0] == 3:
+            # (3, H, W) RGB tensor → invert via luminance
+            arr = _rgb_to_scalar(np.transpose(arr, (1, 2, 0)) * 127.5 + 127.5)
+        else:
+            arr = arr.squeeze()  # (1, H, W) or (H, W)
     else:
         arr = np.asarray(spectrogram, dtype=np.float32)
 

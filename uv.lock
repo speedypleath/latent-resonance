@@ -442,6 +442,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "librosa" },
+    { name = "matplotlib" },
     { name = "mediapipe" },
     { name = "numpy" },
     { name = "opencv-python" },
@@ -460,6 +461,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "librosa", specifier = ">=0.11.0" },
+    { name = "matplotlib", specifier = ">=3.9.0" },
     { name = "mediapipe", specifier = ">=0.10.32" },
     { name = "numpy", specifier = ">=2.3.5" },
     { name = "opencv-python", specifier = ">=4.13.0.90" },

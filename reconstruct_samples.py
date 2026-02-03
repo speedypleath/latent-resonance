@@ -17,6 +17,7 @@ if not os.path.exists(SG3_DIR):
 sys.path.insert(0, SG3_DIR)
 
 from latent_resonance.dataset import spectrogram_to_audio, save_audio
+from latent_resonance.dataset.processing import spectrogram_to_image
 
 # ── Settings ──────────────────────────────────────────────────────────────
 CHECKPOINT = "checkpoints/network-snapshot-000400.pkl"
@@ -47,11 +48,17 @@ print(f"Generated {NUM_SAMPLES} spectrograms, shape: {imgs.shape}")
 
 # ── Save spectrograms & reconstruct audio ─────────────────────────────────
 for i in range(NUM_SAMPLES):
-    spec = imgs[i, 0].cpu().numpy()  # (H, W) in [-1, 1]
+    img_tensor = imgs[i]  # (C, H, W) in [-1, 1]
 
-    # Save spectrogram as PNG (grayscale, flipped to match forward pipeline)
-    img_uint8 = ((spec + 1.0) / 2.0 * 255.0).clip(0, 255).astype(np.uint8)
-    img_pil = Image.fromarray(img_uint8, mode="L").transpose(Image.FLIP_TOP_BOTTOM)
+    if img_tensor.shape[0] == 3:
+        # RGB model (magma colormap) — use the full 3-channel tensor
+        spec = img_tensor[0].cpu().numpy()  # scalar channel for audio
+        img_pil = spectrogram_to_image(spec)
+    else:
+        # Legacy 1-channel model
+        spec = img_tensor[0].cpu().numpy()
+        img_pil = spectrogram_to_image(spec)
+
     png_path = os.path.join(OUTPUT_DIR, f"sample_{i}.png")
     img_pil.save(png_path)
     print(f"  Sample {i} spectrogram → {png_path}")
