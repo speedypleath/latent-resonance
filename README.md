@@ -20,46 +20,83 @@ The pipeline consists of four distinct stages:
 ## The Dataset
 
 **Source Material:**
-The model was trained on a custom-curated dataset of almost 500 spectrograms generated from audio samples sourced via [freesound.org](https://freesound.org) (cello, sustained tones, reese bass, and similar structured harmonic material).
+The model was trained on a custom-curated dataset of almost 500 spectrograms generated from audio samples sourced via [freesound.org](https://freesound.org) (dark drone, sustained tones, reese bass, and similar structured harmonic material).
 
 ### Curation Process
 
 * **Audio Sourcing:** Samples were downloaded using the built-in freesound scraper (`latent-resonance-scraper`), filtering by duration and selecting sounds with clear harmonic structure.
 * **Audio Processing:** Raw audio was batch-processed using `librosa.feature.melspectrogram`, producing 512x512 grayscale PNGs.
 * **Normalization:** All spectrograms were converted to log-scale (dB) and normalized to a range of `[-1, 1]` to stabilize GAN training.
-* **Learnings:** I discovered that "noisy" images (like white noise spectrograms) confuse the model, while structured harmonic sounds (like cello or speech) produce cleaner visual patterns.
 
 ## Training the GAN
 
-The curated spectrogram dataset was used to train a StyleGAN model using transfer learning from pre-trained weights (FFHQ). Training was performed on free-tier GPU platforms (Google Colab and Kaggle) with significant modifications to accommodate hardware limitations (detailed in the Technical Challenges section).
+The curated spectrogram dataset was used to train a StyleGAN model using transfer learning from pre-trained weights (FFHQ). Training was performed on free-tier GPU platforms (Google Colab and Kaggle) with significant modifications to accommodate hardware limitations (detailed in the Technical Challenges section), and using Resolume (with significant other challanges).
 
-### Phase 1: The Nightmare Phase (0 – 50 kimg)
+### Training on Kaggle
+
+* **Platform:** Kaggle (2x Tesla T4 GPUs)
+* **Duration:** 400 kimg (approx. 9 hours)
+* **Model:** StyleGAN2-ada (translation-equivariant)
+* **Hyperparameters:**  High model capacity (`cbase=16384`, `cmax=512`, `batch=16`) to fully utilise both GPUs. `gamma=2.0` to encourage high-frequency detail.
+* **Workarounds:** Patched CUDA ops to fall back to native PyTorch implementations due to compilation issues on T4 GPUs and ignored tensor shape mismatch between pre-trained weights and spectrogram data to allow grayscale input.
+
+![alt text](assets/reals_kaggle.png)
+
+#### Phase 1: The Nightmare Phase (0 – 50 kimg)
 
 **Time**: First hour.
 
 **Visual**: You will see terrifying, melted faces. Some might have "bassline textures" instead of skin, but you will clearly see eyes or mouths.
 
-![alt text](assets/image.png)
+![alt text](assets/fakes0_kaggle.png)
 
 **Audio Quality**: Unusable. It will sound like static with weird voice-like formants.
 
-### Phase 2: The "Structure" Phase (50 – 200 kimg)
+#### Phase 2: The "Structure" Phase (50 – 200 kimg)
 
 **Time**: Hours 1 to 4.
 
 **Visual**: The faces fade away. You start seeing horizontal lines (which are bass notes).
 
+![alt text](assets/fakes12_kaggle.png)
+
 **Audio Quality**: "Lo-Fi". The audio will be recognizable as a drone or bass, but it will sound "watery" or "phasey" (like a low-quality MP3). The background silence might be hissy because the blacks aren't fully black yet.
 
-### Phase 3: The "Usable" Phase (200 – 400 kimg)
+#### Phase 3: The "Usable" Phase (200 – 400 kimg)
 
-**Time**: Hours 4 to 8. (Target this window!)
+**Time**: Hours 6 to 9 hours.
 
 **Visual**: The lines become sharp and high-contrast. The background becomes solid black.
 
+![alt text](assets/fakes36_kaggle.png)
+
 **Audio Quality**: Good. The sharper the image, the clearer the tone. Sharp lines = Pure sine waves. Blurry lines = Noise.
 
-**Action**: If you see distinct, sharp horizontal bands in your fakes.png, STOP. You are done.
+### Training using Autolume
+
+* **Duration:** Aprox 6 hours.
+* **Model:** StyleGAN2-ada
+* **Workarounds:** Generated RGB dataset using magma cmap to allow transfer learning from pre-trained weights.
+
+![alt text](assets/reals_autolume.png)
+
+#### Phase 1: FFHQ data
+
+Generated images using the pretrained ffhq512 pretrained model.
+
+![alt text](assets/fakes0_autolume.png)
+
+#### Phase 2: Distorted Spectrograms
+
+The spectrograms are distorted, some shapes remain from the pretrained weights.
+
+![alt text](assets/fakes8_autolume.png)
+
+#### Phase 3: Clear Spectrograms
+
+Less sharp details and a higher contrast, almost clear spectrograms.
+
+![alt text](assets/fakes16_autolume.png)
 
 ## Controls & Interaction
 
@@ -71,6 +108,9 @@ The system does not map 1:1 coordinates (e.g., "head left = sound left"). Instea
 | **Mouth Openness** | Distance (LipTop, LipBottom) | **Bandpass Filter:** Determines the frequency range (Mouth closed = Low pass; Open = Full spectrum). |
 | **Eyebrow Tension** | Distance (Brow, Eye) | **Noise/Entropy:** Adds jitter to the latent vector, introducing digital glitches/static. |
 | **Stillness** | $\Delta$ Position $\approx 0$ | **Clarity:** The model settles on a "pure" tone. |
+
+> [!NOTE]
+> Functionality is developed poorly and is not realiable
 
 ## Installation & Usage
 
@@ -121,9 +161,12 @@ uv run pytest tests/ -v
 
 **Solution**: I used a smoothing function (Linear Interpolation) on the input vector. This allows the sound to "morph" slowly rather than snapping instantly, creating a fluid, drone-like aesthetic.
 
+> [!IMPORTANT]
+> Crossfading solution doesn't really work, won't debug
+
 ### 3. Training the GAN: Trial and Error
 
-I chose **StyleGAN3-t** (translation-equivariant) for its suitability with spectrograms, where the horizontal axis represents time and translation equivariance preserves temporal structure.
+I chose **StyleGAN2-ada** for its suitability with small data sets, where the horizontal axis represents time and translation equivariance preserves temporal structure.
 
 **Colab attempt (single T4):** My first attempt was on Google Colab with a single Tesla T4 GPU. StyleGAN3's custom CUDA ops (`bias_act`, `upfirdn2d`, `filtered_lrelu`) failed to compile — the fused kernels expect a build environment that Colab doesn't provide out of the box. I had to patch the ops to fall back to native PyTorch reference implementations, which are significantly more memory-hungry. This forced me to drastically reduce the model: `cbase=8192`, `cmax=128`, `batch=2` — a quarter of the default capacity — just to fit in the T4's 15 GB VRAM. Training ran for 1000 kimg but Colab's session time limits made long runs unreliable.
 
@@ -131,7 +174,7 @@ I chose **StyleGAN3-t** (translation-equivariant) for its suitability with spect
 
 **Kaggle attempt (T4 x2):** To get longer uninterrupted training, I moved to Kaggle which offers dual T4 GPUs and longer session limits. I initially configured multi-GPU training (`--gpus=2`) but ran into issues and fell back to single-GPU mode. The same CUDA ops compilation problem occurred, requiring the same native fallback and reduced model capacity. I trained for 5000 kimg on Kaggle, which produced usable results.
 
-**What I learned:** Free-tier GPU platforms are viable for GAN training but require significant adaptation. The gap between "paper configurations" and what actually runs on a T4 with native ops is large — I ended up using roughly 1/4 of the model's intended capacity. Despite this, the 435-spectrogram dataset was small enough that the reduced model could still learn meaningful structure. Structured harmonic source material (cello, sustained tones) trained noticeably better than percussive or noisy samples.
+**What I learned:** Free-tier GPU platforms are viable for GAN training but require significant adaptation. The gap between "paper configurations" and what actually runs on a T4 with native ops is large — I ended up using roughly 1/4 of the model's intended capacity. Despite this, the 490-spectrogram dataset was small enough that the reduced model could still learn meaningful structure.
 
 Training notebooks are available in the `notebooks/` folder: `train_stylegan3.ipynb` (Colab) and `train_stylegan3_kaggle.ipynb` (Kaggle).
 

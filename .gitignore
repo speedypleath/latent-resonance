@@ -13,3 +13,5 @@ wheels/
 .env
 /data/
 /checkpoints/
+/reconstructed_audio/
+.DS_Store
