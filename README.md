@@ -161,6 +161,12 @@ uv sync --group dev
 uv run pytest tests/ -v
 ```
 
+## Navigating the latent space
+
+To explore the latent space you can either use the built-in tool in Autolume **or** use the `visualizer.py` script from [StyleGAN-3](https://github.com/NVlabs/stylegan3) (requires several workarounds to use on MacOS).
+
+![visualiser](assets/output.gif)
+
 ## Technical Challenges & Learnings
 
 ### 1. The "Phase" Problem
