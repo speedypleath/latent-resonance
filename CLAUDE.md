@@ -19,7 +19,7 @@ uv add <package>
 uv run python main.py
 
 # Reconstruct audio from latest checkpoint (no webcam needed)
-uv run python reconstruct_samples.py
+uv run python scripts/reconstruct_samples.py
 ```
 
 Requires Python 3.13+, [uv](https://docs.astral.sh/uv/), and a webcam for live mode.
@@ -131,7 +131,6 @@ Model checkpoints are saved in `checkpoints/` (StyleGAN pkl format). `reconstruc
 
 ```
 main.py                    # Live webcam → GAN → audio entry point
-reconstruct_samples.py     # Generate spectrograms from checkpoint & reconstruct audio
 latent_resonance/
     __init__.py
     dataset/
@@ -142,6 +141,8 @@ latent_resonance/
         cli.py             # argparse CLI entry point
         __main__.py        # shim for python -m latent_resonance.dataset
         scraper.py         # freesound.org search + download
+scripts/
+    reconstruct_samples.py # Generate spectrograms from checkpoint & reconstruct audio
 tests/
     test_processing.py     # forward/inverse pipeline & round-trip tests
 notebooks/

@@ -137,6 +137,20 @@ uv sync
 uv run python main.py
 ```
 
+### Reconstructing Audio from Checkpoints
+
+Generate spectrograms and reconstruct audio from a trained model (no webcam needed):
+
+```bash
+uv run python scripts/reconstruct_samples.py
+```
+
+Configure via environment variables:
+
+```bash
+CHECKPOINT_PATH=checkpoints/your-run/ OUTPUT_DIR=output/ uv run python scripts/reconstruct_samples.py
+```
+
 ### Running Tests
 
 ```bash
@@ -190,6 +204,8 @@ latent_resonance/          # Python package
         cli.py             # argparse CLI entry point
         __main__.py        # python -m latent_resonance.dataset
         scraper.py         # freesound.org search + download
+scripts/
+    reconstruct_samples.py # Generate spectrograms from checkpoint & reconstruct audio
 tests/
     test_processing.py     # Forward/inverse pipeline & round-trip tests
 notebooks/                 # Training notebooks
